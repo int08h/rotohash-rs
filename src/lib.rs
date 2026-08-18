@@ -93,7 +93,6 @@ pub fn hash(data: &[u8]) -> Hash128 {
 /// All implementations produce identical hashes. They differ only in the
 /// instruction set they use.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[non_exhaustive]
 pub enum Implementation {
     /// The 128-bit x86-64 implementation, using AVX2 and AES-NI.
     Avx2,
@@ -158,23 +157,17 @@ pub fn implementation() -> Implementation {
 #[inline]
 pub fn hash_with_seed(data: &[u8], seed: u64) -> Hash128 {
     match implementation() {
-        // SAFETY: `implementation` only returns `Avx512` after checking the
-        // AVX-512F, AVX-512BW, and VAES features used by this implementation.
+        // SAFETY: `implementation` asserts AVX-512F, AVX-512BW, and VAES.
         #[cfg(target_arch = "x86_64")]
         Implementation::Avx512 => unsafe { avx512::hash_avx512(data, seed) },
 
-        // SAFETY: `implementation` asserts that AVX2 and AES-NI are present.
-        // The implementation uses unaligned loads only where the full input is
-        // in bounds, and copies partial tails to a local, zero-filled block.
+        // SAFETY: `implementation` asserts AVX2 and AES-NI.
         #[cfg(target_arch = "x86_64")]
         Implementation::Avx2 => unsafe { avx2::hash_avx2(data, seed) },
 
-        // SAFETY: `implementation` asserts NEON and AES; loads stay in bounds.
+        // SAFETY: `implementation` asserts NEON and AES.
         #[cfg(target_arch = "aarch64")]
         Implementation::Neon => unsafe { neon::hash_neon(data, seed) },
-
-        // Other architectures' variants are never returned.
-        other => unreachable!("{other} is not available on this architecture"),
     }
 }
 
