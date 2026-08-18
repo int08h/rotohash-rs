@@ -1,11 +1,11 @@
 [package]
 name = "rotohash-rs"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.89"
-description = "A high-throughput 128-bit RotoHash implementation"
+description = "Hashing for High-Bandwidth (>100 GiB/sec) Data"
 license = "MIT"
-repository = "https://github.com/jandrewrogers/RotoHash"
+repository = "https://github.com/int08h/rotohash-rs"
 keywords = ["hash", "checksum", "simd", "avx2", "neon"]
 categories = ["algorithms"]
 exclude = ["benches", "examples", "tests"]
