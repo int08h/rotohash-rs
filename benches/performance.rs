@@ -91,14 +91,14 @@ fn benchmark_rust(data: &[u8]) -> f64 {
     samples[SAMPLES / 2]
 }
 
-/// Runs the C++ reference benchmark, which only supports x86-64.
+/// No C++ reference off x86-64.
 #[cfg(not(target_arch = "x86_64"))]
 fn cpp_results() -> Option<Vec<(usize, f64)>> {
     eprintln!("the C++ reference implementation is x86-64 only; reporting Rust results only");
     None
 }
 
-/// Runs the C++ reference benchmark, which only supports x86-64.
+/// Runs the C++ reference benchmark.
 #[cfg(target_arch = "x86_64")]
 fn cpp_results() -> Option<Vec<(usize, f64)>> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));

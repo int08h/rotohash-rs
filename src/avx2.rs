@@ -1,7 +1,5 @@
-//! The 128-bit x86-64 implementation, using AVX2 and AES-NI.
-//!
-//! The 512-bit `avx512.rs` and aarch64 `neon.rs` implementations
-//! mirror this structure and produce identical hashes.
+//! The 128-bit x86-64 (AVX2 + AES-NI) implementation, which `avx512.rs` and
+//! `neon.rs` mirror.
 
 use crate::{CONSTANT, Hash128};
 use core::arch::x86_64::*;

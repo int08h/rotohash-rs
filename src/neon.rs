@@ -1,19 +1,13 @@
-//! The aarch64 implementation, using NEON and the ARMv8 AES extension.
-//!
-//! This mirrors `avx2.rs` lane for lane; see that module for the
-//! algorithm structure and `Lane` below for how x86 `aesenc` is emulated.
+//! The aarch64 (NEON + AES) implementation. Mirrors `avx2.rs` lane for lane.
 
 use crate::{CONSTANT, Hash128};
 use core::arch::aarch64::*;
 
-/// One 128-bit lane of hash state.
+/// A lane of state, kept lagged: the true value is `state ^ key`.
 ///
-/// x86 `aesenc(v, k)` computes `MixColumns(ShiftRows(SubBytes(v))) ^ k`,
-/// while ARMv8 `AESE(v, k)` computes `ShiftRows(SubBytes(v ^ k))` and
-/// `AESMC` applies `MixColumns`. To avoid a separate XOR per round, the
-/// state is kept lagged: the true x86 lane value is `state ^ key`, where
-/// `key` is the last value that was XORed in. Feeding `key` to the next
-/// `AESE` performs that XOR for free.
+/// x86 `aesenc(v, k)` = `MC(SR(SB(v))) ^ k`; ARMv8 `AESE(v, k)` =
+/// `SR(SB(v ^ k))`, `AESMC` = `MC`. Feeding `key` to the next `AESE`
+/// saves an XOR per round.
 #[derive(Clone, Copy)]
 struct Lane {
     state: uint8x16_t,
@@ -34,23 +28,21 @@ fn tail_load(data: &[u8], offset: usize) -> uint8x16_t {
     unsafe { load(block.as_ptr()) }
 }
 
-/// `MixColumns(ShiftRows(SubBytes(value ^ key)))`: an x86 `aesenc` round
-/// without the trailing XOR, applied to `value ^ key`.
+/// `aesenc(value ^ key, 0)`.
 #[inline(always)]
 unsafe fn aes_round(value: uint8x16_t, key: uint8x16_t) -> uint8x16_t {
     // SAFETY: hash_neon verifies availability of the AES extension.
     unsafe { vaesmcq_u8(vaeseq_u8(value, key)) }
 }
 
-/// x86 `aesenc(a ^ b, key)`, folding the XOR into the AES round.
+/// `aesenc(a ^ b, key)`.
 #[inline(always)]
 unsafe fn enc_xor(a: uint8x16_t, b: uint8x16_t, key: uint8x16_t) -> uint8x16_t {
     // SAFETY: hash_neon verifies availability of the AES extension.
     unsafe { veorq_u8(aes_round(a, b), key) }
 }
 
-/// Absorbs one 16-byte input block into a lane, equivalent to
-/// `lane = aesenc(lane, input)` on the true lane value.
+/// `lane = aesenc(lane, input)`.
 #[inline(always)]
 unsafe fn absorb(lane: &mut Lane, input: uint8x16_t) {
     // SAFETY: hash_neon verifies availability of the AES extension.
@@ -58,16 +50,13 @@ unsafe fn absorb(lane: &mut Lane, input: uint8x16_t) {
     lane.key = input;
 }
 
-/// Per-32-bit-lane variable rotate left, matching the AVX2 emulation:
-/// the shift count is masked to five bits.
+/// Per-32-bit rotate left by `shift & 0x1f`, as in `avx2.rs`.
 #[inline]
 #[target_feature(enable = "neon")]
 fn rot(value: uint8x16_t, shift: uint8x16_t) -> uint8x16_t {
     let value = vreinterpretq_u32_u8(value);
     let left = vandq_u32(vreinterpretq_u32_u8(shift), vdupq_n_u32(0x1f));
-    // NEON has no variable rotate, but its variable shift takes a signed
-    // count: negative counts shift right, and a count of -32 yields zero,
-    // matching `_mm_srlv_epi32` by 32.
+    // No NEON rotate; negative shifts go right, and -32 yields zero.
     let right = vreinterpretq_s32_u32(vsubq_u32(left, vdupq_n_u32(32)));
     let left = vreinterpretq_s32_u32(left);
     vreinterpretq_u8_u32(vorrq_u32(vshlq_u32(value, left), vshlq_u32(value, right)))
@@ -95,8 +84,7 @@ pub(crate) unsafe fn hash_neon(data: &[u8], seed: u64) -> Hash128 {
     for (lane, constant) in lanes.iter_mut().zip(c) {
         lane.state = constant;
     }
-    // Rather than XORing the seed into the state, record it as the pending
-    // key; the first AES round folds it in.
+    // The first AES round folds the seed in.
     let seed_vector = vreinterpretq_u8_u64(vdupq_n_u64(seed));
     for lane in &mut lanes[..4] {
         lane.key = seed_vector;
@@ -104,11 +92,8 @@ pub(crate) unsafe fn hash_neon(data: &[u8], seed: u64) -> Hash128 {
 
     let mut offset = 0usize;
     if data.len() >= 256 {
-        // In the bulk loop, the pending key of every lane is simply that
-        // lane's slice of the previous 256-byte block. Rather than holding
-        // sixteen states plus sixteen keys in registers (which spills),
-        // re-read the previous block from cache: the state stays in
-        // registers and each lane costs one load, AESE, and AESMC.
+        // Each pending key is a slice of the previous block; re-reading it
+        // from cache, rather than keeping 16 keys in registers, avoids spills.
         let mut state = [zero; 16];
         for (state, lane) in state.iter_mut().zip(&lanes) {
             // SAFETY: hash_neon verifies availability of the AES extension.
@@ -119,8 +104,7 @@ pub(crate) unsafe fn hash_neon(data: &[u8], seed: u64) -> Hash128 {
         while data.len() - offset >= 256 {
             let previous = offset - 256;
             for (index, state) in state.iter_mut().enumerate() {
-                // SAFETY: the loop condition guarantees a complete 256-byte
-                // block at `offset`, so the previous block is in bounds too.
+                // SAFETY: `previous` precedes a full block at `offset`.
                 let key = unsafe { load(data.as_ptr().add(previous + index * 16)) };
                 *state = unsafe { aes_round(*state, key) };
             }
@@ -130,7 +114,7 @@ pub(crate) unsafe fn hash_neon(data: &[u8], seed: u64) -> Hash128 {
         let previous = offset - 256;
         for (index, lane) in lanes.iter_mut().enumerate() {
             lane.state = state[index];
-            // SAFETY: the block at `previous` was fully consumed above.
+            // SAFETY: read above.
             lane.key = unsafe { load(data.as_ptr().add(previous + index * 16)) };
         }
     }
@@ -168,7 +152,7 @@ pub(crate) unsafe fn hash_neon(data: &[u8], seed: u64) -> Hash128 {
         }
     }
 
-    // Resolve the lagged representation into the true lane values.
+    // Un-lag the lanes.
     let mut v = [zero; 16];
     for (value, lane) in v.iter_mut().zip(lanes) {
         *value = xor(lane.state, lane.key);

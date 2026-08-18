@@ -1,13 +1,6 @@
-//! Verifies this machine's implementation against every vector file checked
-//! in under `tests/vectors/`. Each file records hashes produced by a specific
-//! architecture and implementation, so running `cargo test` on an aarch64
-//! machine checks NEON against x86-64 results, and vice versa.
-//!
-//! Generate a new file on any supported machine with:
-//!
-//! ```console
-//! cargo run --release --example vectors -- generate tests/vectors/<name>.txt
-//! ```
+//! Verifies this machine against every file in `tests/vectors/`, each recorded
+//! on some architecture. Generate one with
+//! `cargo run --release --example vectors -- generate tests/vectors/<name>.txt`.
 
 #[path = "support/vectors.rs"]
 mod support;

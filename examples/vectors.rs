@@ -1,21 +1,5 @@
-//! Generates and verifies RotoHash test-vector files, for checking that the
-//! implementations for different architectures agree with each other.
-//!
-//! On the first machine (say, x86-64):
-//!
-//! ```console
-//! cargo run --release --example vectors -- generate tests/vectors/x86_64.txt
-//! ```
-//!
-//! Copy the file to the second machine (say, aarch64) and run:
-//!
-//! ```console
-//! cargo run --release --example vectors -- verify tests/vectors/x86_64.txt
-//! ```
-//!
-//! `verify` re-hashes every case at several input alignments and exits with
-//! status 1 if any hash disagrees. With no paths, it verifies every file in
-//! `tests/vectors/`, which `cargo test` also does.
+//! Cross-architecture test vectors: `generate FILE` on one machine, then
+//! `verify FILE` on another (exit 1 on mismatch; no paths = `tests/vectors/`).
 
 #[path = "../tests/support/vectors.rs"]
 mod support;

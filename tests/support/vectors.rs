@@ -1,17 +1,7 @@
-//! Shared logic for RotoHash test-vector files, used by the `vectors`
-//! integration test and the `vectors` example.
+//! Test-vector files, shared by the `vectors` test and example.
 //!
-//! A vector file is plain text. Lines starting with `#` are metadata or
-//! comments; every other non-blank line is one case:
-//!
-//! ```text
-//! <length> <seed as hex> <hash as 32 hex digits>
-//! ```
-//!
-//! The input bytes for a case are derived deterministically from its length
-//! and seed, so a file generated on one machine (say, x86-64 with AVX-512) is
-//! self-contained and can be verified on another (say, aarch64 with NEON)
-//! without shipping the input data.
+//! `#` lines are metadata; other lines are `<length> <seed hex> <hash hex>`.
+//! Inputs derive from length and seed, so files are self-contained.
 
 #![allow(dead_code)]
 
@@ -19,22 +9,19 @@ use rotohash::hash_with_seed;
 use std::fmt;
 use std::io::{self, Write};
 
-/// Bumped if the case list or the input-derivation rule changes.
+/// Bumped when cases or input derivation change.
 pub const FORMAT_VERSION: u32 = 1;
 
-/// Seeds exercised by the generated cases.
+/// Seeds used by the cases.
 pub const SEEDS: [u64; 4] = [0, 1, 0x0123_4567_89AB_CDEF, u64::MAX];
 
-/// Input alignments (byte offsets into a 64-byte-aligned buffer) at which
-/// every case is re-hashed during verification.
+/// Alignments at which every case is verified.
 pub const OFFSETS: [usize; 5] = [0, 1, 15, 31, 63];
 
-/// Every length from 0 through this bound is hashed with two seeds, covering
-/// each tail-handling path (partial lane, partial group, full block) many
-/// times over.
+/// Lengths `0..=` this are hashed with two seeds.
 pub const DENSE_LENGTH_LIMIT: usize = 1024;
 
-/// Larger lengths around block and page boundaries, hashed with every seed.
+/// Boundary lengths, hashed with each seed.
 pub const SPARSE_LENGTHS: [usize; 13] = [
     2047,
     2048,
@@ -51,7 +38,7 @@ pub const SPARSE_LENGTHS: [usize; 13] = [
     (1 << 20) + 33,
 ];
 
-/// One input to hash: `length` bytes derived from `(length, seed)`.
+/// One input, derived from `(length, seed)`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Case {
     pub length: usize,
@@ -59,7 +46,7 @@ pub struct Case {
 }
 
 impl Case {
-    /// Deterministic input bytes for this case (SplitMix64-style).
+    /// The input bytes (SplitMix64-style).
     pub fn data(&self) -> Vec<u8> {
         let id = (self.length as u64) ^ self.seed.wrapping_mul(0x2545_F491_4F6C_DD1D);
         (0..self.length)
@@ -75,13 +62,13 @@ impl Case {
             .collect()
     }
 
-    /// Hashes the case with the implementation selected for this processor.
+    /// The hash on this machine.
     pub fn hash(&self) -> String {
         format!("{:x}", hash_with_seed(&self.data(), self.seed))
     }
 }
 
-/// The complete, ordered case list.
+/// The ordered case list.
 pub fn cases() -> Vec<Case> {
     let mut cases = Vec::new();
     for length in 0..=DENSE_LENGTH_LIMIT {
@@ -97,7 +84,7 @@ pub fn cases() -> Vec<Case> {
     cases
 }
 
-/// One expected result read from (or destined for) a vector file.
+/// One vector-file line.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Vector {
     pub case: Case,
@@ -107,7 +94,7 @@ pub struct Vector {
 /// A parsed vector file.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct VectorFile {
-    /// Values of `# key=value` metadata lines, in file order.
+    /// `# key=value` lines, in order.
     pub metadata: Vec<(String, String)>,
     pub vectors: Vec<Vector>,
 }
@@ -120,8 +107,7 @@ impl VectorFile {
             .map(|(_, v)| v.as_str())
     }
 
-    /// A short description of where the file came from, e.g.
-    /// `x86_64/AVX-512`.
+    /// E.g. `x86_64/AVX-512`.
     pub fn origin(&self) -> String {
         format!(
             "{}/{}",
@@ -131,12 +117,12 @@ impl VectorFile {
     }
 }
 
-/// Describes the current machine, in the same terms as file metadata.
+/// [`VectorFile::origin`] for this machine.
 pub fn local_origin() -> String {
     format!("{}/{}", std::env::consts::ARCH, rotohash::implementation())
 }
 
-/// Hashes every case on this machine and writes a vector file to `out`.
+/// Writes a vector file for this machine.
 pub fn write_vectors(out: &mut impl Write) -> io::Result<()> {
     writeln!(out, "# rotohash-rs test vectors")?;
     writeln!(out, "# format={FORMAT_VERSION}")?;
@@ -151,7 +137,7 @@ pub fn write_vectors(out: &mut impl Write) -> io::Result<()> {
     Ok(())
 }
 
-/// Parses the text of a vector file.
+/// Parses a vector file.
 pub fn parse(text: &str) -> Result<VectorFile, String> {
     let mut file = VectorFile::default();
     for (index, raw) in text.lines().enumerate() {
@@ -201,7 +187,7 @@ pub fn parse(text: &str) -> Result<VectorFile, String> {
     Ok(file)
 }
 
-/// A hash computed on this machine that disagrees with the file.
+/// A local hash that disagrees with the file.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Mismatch {
     pub case: Case,
@@ -220,8 +206,7 @@ impl fmt::Display for Mismatch {
     }
 }
 
-/// Re-hashes every vector in `file` on this machine, at every alignment in
-/// [`OFFSETS`], and returns the disagreements.
+/// Re-hashes every vector at every [`OFFSETS`] entry.
 pub fn verify(file: &VectorFile) -> Vec<Mismatch> {
     #[derive(Clone, Copy)]
     #[repr(align(64))]
@@ -232,8 +217,7 @@ pub fn verify(file: &VectorFile) -> Vec<Mismatch> {
         let data = vector.case.data();
         let padding = OFFSETS.iter().copied().max().unwrap_or(0);
         let mut buffer = vec![Aligned([0xA5; 64]); (padding + data.len()).div_ceil(64) + 1];
-        // SAFETY: `Aligned` is exactly 64 bytes with 64-byte alignment and no
-        // padding, so the vector's blocks form one contiguous byte range.
+        // SAFETY: `Aligned` is 64 unpadded bytes.
         let bytes = unsafe {
             std::slice::from_raw_parts_mut(buffer.as_mut_ptr().cast::<u8>(), buffer.len() * 64)
         };

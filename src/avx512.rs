@@ -1,7 +1,5 @@
-//! The 512-bit x86-64 implementation, using AVX-512F, AVX-512BW, and VAES.
-//!
-//! Each 512-bit vector holds four of the sixteen 128-bit lanes used by
-//! `avx2.rs`; the two produce identical hashes.
+//! The 512-bit x86-64 (AVX-512F/BW + VAES) implementation; each vector holds
+//! four of the sixteen `avx2.rs` lanes.
 
 use crate::{CONSTANT, Hash128};
 use core::arch::x86_64::*;

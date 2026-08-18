@@ -1,10 +1,8 @@
 //! RotoHash is a high-throughput, non-cryptographic 128-bit hash. RotoHash is
 //! specifically for hashing large inputs at >100 GiB/sec.
 //!
-//! This crate is a Rust port of the reference C++ implementation. It supports
-//! x86-64 processors with AVX2 and AES-NI (using AVX-512 and VAES when
-//! available) and aarch64 processors with NEON and the ARMv8 AES extension.
-//! Every implementation produces identical hashes.
+//! A Rust port of the reference C++ implementation, for x86-64 (AVX2/AES-NI or
+//! AVX-512/VAES) and aarch64 (NEON/AES). All implementations hash identically.
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 compile_error!("rotohash-rs requires x86-64 or aarch64");
@@ -84,8 +82,7 @@ impl fmt::Display for Hash128 {
 ///
 /// # Panics
 ///
-/// Panics if the current processor lacks the required features: AVX2 and
-/// AES-NI on x86-64, or NEON and the AES extension on aarch64.
+/// Panics without AVX2+AES-NI (x86-64) or NEON+AES (aarch64).
 #[inline]
 pub fn hash(data: &[u8]) -> Hash128 {
     hash_with_seed(data, 0)
@@ -102,8 +99,7 @@ pub enum Implementation {
     Avx2,
     /// The 512-bit x86-64 implementation, using AVX-512F, AVX-512BW, and VAES.
     Avx512,
-    /// The 128-bit aarch64 implementation, using NEON and the ARMv8 AES
-    /// extension.
+    /// The 128-bit aarch64 implementation, using NEON and AES.
     Neon,
 }
 
@@ -122,8 +118,7 @@ impl fmt::Display for Implementation {
 ///
 /// # Panics
 ///
-/// Panics if the current processor lacks the required features: AVX2 and
-/// AES-NI on x86-64, or NEON and the AES extension on aarch64.
+/// Panics without AVX2+AES-NI (x86-64) or NEON+AES (aarch64).
 #[inline]
 pub fn implementation() -> Implementation {
     #[cfg(target_arch = "x86_64")]
@@ -159,8 +154,7 @@ pub fn implementation() -> Implementation {
 ///
 /// # Panics
 ///
-/// Panics if the current processor lacks the required features: AVX2 and
-/// AES-NI on x86-64, or NEON and the AES extension on aarch64.
+/// Panics without AVX2+AES-NI (x86-64) or NEON+AES (aarch64).
 #[inline]
 pub fn hash_with_seed(data: &[u8], seed: u64) -> Hash128 {
     match implementation() {
@@ -175,13 +169,11 @@ pub fn hash_with_seed(data: &[u8], seed: u64) -> Hash128 {
         #[cfg(target_arch = "x86_64")]
         Implementation::Avx2 => unsafe { avx2::hash_avx2(data, seed) },
 
-        // SAFETY: `implementation` asserts that NEON and AES are present. The
-        // implementation uses unaligned loads only where the full input is in
-        // bounds, and copies partial tails to a local, zero-filled block.
+        // SAFETY: `implementation` asserts NEON and AES; loads stay in bounds.
         #[cfg(target_arch = "aarch64")]
         Implementation::Neon => unsafe { neon::hash_neon(data, seed) },
 
-        // `implementation` never returns a variant from another architecture.
+        // Other architectures' variants are never returned.
         other => unreachable!("{other} is not available on this architecture"),
     }
 }
