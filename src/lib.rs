@@ -1,5 +1,5 @@
-//! RotoHash is a high-throughput, non-cryptographic 128-bit hash. RotoHash is
-//! specifically for hashing large inputs at >100 GiB/sec.
+//! RotoHash is a high-throughput, non-cryptographic 128-bit hash for
+//! hashing large inputs at >100 GiB/sec.
 //!
 //! A Rust port of the reference C++ implementation, for x86-64 (AVX2/AES-NI or
 //! AVX-512/VAES) and aarch64 (NEON/AES). All implementations hash identically.
@@ -168,14 +168,23 @@ pub fn hash_with_seed(data: &[u8], seed: u64) -> Hash128 {
         // SAFETY: `implementation` asserts NEON and AES.
         #[cfg(target_arch = "aarch64")]
         Implementation::Neon => unsafe { neon::hash_neon(data, seed) },
+
+        // for exhaustiveness
+        #[cfg(target_arch = "x86_64")]
+        Implementation::Neon => unreachable!("NEON cannot be selected on x86-64"),
+
+        // for exhaustiveness
+        #[cfg(target_arch = "aarch64")]
+        Implementation::Avx2 | Implementation::Avx512 => {
+            unreachable!("an x86-64 implementation cannot be selected on aarch64")
+        }
     }
 }
 
 #[repr(align(64))]
 struct AlignedConstant([u8; 256]);
 
-// This constant is part of the algorithm and is copied from the
-// C++ reference implementation.
+// This constant is copied from the C++ reference implementation.
 static CONSTANT: AlignedConstant = AlignedConstant([
     0x8F, 0x5B, 0x86, 0x39, 0x77, 0xFC, 0x2A, 0x2E, 0xB2, 0x70, 0x4C, 0x69, 0xC2, 0x65, 0xD1, 0x91,
     0x71, 0x18, 0x15, 0xAD, 0xF5, 0x62, 0x95, 0x3E, 0x6E, 0x99, 0x94, 0xE3, 0xB1, 0x6C, 0x30, 0x6D,
