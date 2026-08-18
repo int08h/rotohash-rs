@@ -1,3 +1,7 @@
+//! Compares against the C++ reference (x86-64 only; elsewhere, see the
+//! `vectors` test).
+#![cfg(target_arch = "x86_64")]
+
 use rotohash::hash_with_seed;
 use std::path::{Path, PathBuf};
 use std::process::Command;

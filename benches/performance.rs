@@ -1,6 +1,8 @@
 use rotohash::hash_with_seed;
 use std::hint::black_box;
+#[cfg(target_arch = "x86_64")]
 use std::path::{Path, PathBuf};
+#[cfg(target_arch = "x86_64")]
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -89,7 +91,16 @@ fn benchmark_rust(data: &[u8]) -> f64 {
     samples[SAMPLES / 2]
 }
 
-fn cpp_results() -> Vec<(usize, f64)> {
+/// No C++ reference off x86-64.
+#[cfg(not(target_arch = "x86_64"))]
+fn cpp_results() -> Option<Vec<(usize, f64)>> {
+    eprintln!("the C++ reference implementation is x86-64 only; reporting Rust results only");
+    None
+}
+
+/// Runs the C++ reference benchmark.
+#[cfg(target_arch = "x86_64")]
+fn cpp_results() -> Option<Vec<(usize, f64)>> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source = manifest.join("benches/cpp_benchmark.cpp");
     let binary = temporary_binary();
@@ -114,7 +125,7 @@ fn cpp_results() -> Vec<(usize, f64)> {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    String::from_utf8(output.stdout)
+    let results: Vec<(usize, f64)> = String::from_utf8(output.stdout)
         .expect("C++ output was not UTF-8")
         .lines()
         .map(|line| {
@@ -126,9 +137,19 @@ fn cpp_results() -> Vec<(usize, f64)> {
                 nanoseconds.parse().expect("invalid C++ timing"),
             )
         })
-        .collect()
+        .collect();
+    assert_eq!(
+        results.len(),
+        SIZES.len(),
+        "C++ returned the wrong row count"
+    );
+    for (&size, &(cpp_size, _)) in SIZES.iter().zip(&results) {
+        assert_eq!(size, cpp_size, "C++ returned an unexpected size");
+    }
+    Some(results)
 }
 
+#[cfg(target_arch = "x86_64")]
 fn temporary_binary() -> PathBuf {
     std::env::temp_dir().join(format!(
         "rotohash-cpp-benchmark-{}{}",
@@ -159,26 +180,41 @@ fn main() {
     }
 
     let cpp = cpp_results();
-    assert_eq!(cpp.len(), SIZES.len(), "C++ returned the wrong row count");
 
-    println!("RotoHash performance (64-byte aligned, hot input, median of {SAMPLES} samples)");
     println!(
-        "{:<8} {:>14} {:>14} {:>14} {:>14} {:>12}",
-        "Size", "Rust ns/hash", "C++ ns/hash", "Rust GiB/s", "C++ GiB/s", "Rust/C++"
+        "RotoHash performance ({} implementation, 64-byte aligned, hot input, median of {SAMPLES} samples)",
+        rotohash::implementation()
     );
+    match &cpp {
+        Some(_) => println!(
+            "{:<8} {:>14} {:>14} {:>14} {:>14} {:>12}",
+            "Size", "Rust ns/hash", "C++ ns/hash", "Rust GiB/s", "C++ GiB/s", "Rust/C++"
+        ),
+        None => println!("{:<8} {:>14} {:>14}", "Size", "Rust ns/hash", "Rust GiB/s"),
+    }
 
-    for (&size, &(cpp_size, cpp_ns)) in SIZES.iter().zip(&cpp) {
-        assert_eq!(size, cpp_size, "C++ returned an unexpected size");
+    for (index, &size) in SIZES.iter().enumerate() {
         let data = AlignedBuffer::new(size);
         let rust_ns = benchmark_rust(data.as_bytes());
-        println!(
-            "{:<8} {:>14.2} {:>14.2} {:>14.2} {:>14.2} {:>11.3}x",
-            size_label(size),
-            rust_ns,
-            cpp_ns,
-            gib_per_second(size, rust_ns),
-            gib_per_second(size, cpp_ns),
-            cpp_ns / rust_ns,
-        );
+        match &cpp {
+            Some(cpp) => {
+                let cpp_ns = cpp[index].1;
+                println!(
+                    "{:<8} {:>14.2} {:>14.2} {:>14.2} {:>14.2} {:>11.3}x",
+                    size_label(size),
+                    rust_ns,
+                    cpp_ns,
+                    gib_per_second(size, rust_ns),
+                    gib_per_second(size, cpp_ns),
+                    cpp_ns / rust_ns,
+                );
+            }
+            None => println!(
+                "{:<8} {:>14.2} {:>14.2}",
+                size_label(size),
+                rust_ns,
+                gib_per_second(size, rust_ns),
+            ),
+        }
     }
 }
