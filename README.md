@@ -135,15 +135,15 @@ Measured on an Apple M3 with rustc 1.97.1.
 
 | Size    | Rust ns/hash | Rust GiB/s |
 |---------|-------------:|-----------:|
-| 256 B   |        41.32 |       5.77 |
-| 1024 B  |        44.37 |      21.49 |
-| 4096 B  |        62.80 |      60.74 |
-| 8192 B  |        87.34 |      87.36 |
-| 16 KiB  |       136.47 |     111.81 |
-| 64 KiB  |       434.87 |     140.35 |
-| 256 KiB |      2500.51 |      97.64 |
-| 1 MiB   |      9785.15 |      99.80 |
-| 10 MiB  |    100253.52 |      97.41 |
+| 256 B   |        38.60 |       6.18 |
+| 1024 B  |        43.13 |      22.11 |
+| 4096 B  |        60.85 |      62.69 |
+| 8192 B  |        84.07 |      90.75 |
+| 16 KiB  |       130.91 |     116.56 |
+| 64 KiB  |       416.09 |     146.69 |
+| 256 KiB |      2481.27 |      98.39 |
+| 1 MiB   |      9520.63 |     102.57 |
+| 10 MiB  |     98920.08 |      98.72 |
 
 
 ## License
@@ -152,4 +152,3 @@ RotoHash is Copyright (c) 2025 Andrew Rogers, see `LICENSE.rotohash`.
 
 rotohash-rs is Copyright (c) 2026 Stuart Stock, distributed under the MIT license, 
 see `LICENSE` for details.
-

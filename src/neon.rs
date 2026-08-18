@@ -23,7 +23,43 @@ unsafe fn load(ptr: *const u8) -> uint8x16_t {
 #[inline(always)]
 fn tail_load(data: &[u8], offset: usize) -> uint8x16_t {
     let mut block = [0u8; 16];
-    block[..data.len() - offset].copy_from_slice(&data[offset..]);
+    let remaining = data.len() - offset;
+    // SAFETY: the subtraction above establishes `offset <= data.len()`.
+    // Each conditional read is bounded by `remaining`, and `block` has room
+    // for every corresponding write.
+    let input = unsafe { data.as_ptr().add(offset) };
+    let output = block.as_mut_ptr();
+    let mut copied = 0;
+
+    if remaining >= 8 {
+        unsafe {
+            output
+                .cast::<u64>()
+                .write_unaligned(input.cast::<u64>().read_unaligned())
+        };
+        copied = 8;
+    }
+    if remaining - copied >= 4 {
+        unsafe {
+            output
+                .add(copied)
+                .cast::<u32>()
+                .write_unaligned(input.add(copied).cast::<u32>().read_unaligned())
+        };
+        copied += 4;
+    }
+    if remaining - copied >= 2 {
+        unsafe {
+            output
+                .add(copied)
+                .cast::<u16>()
+                .write_unaligned(input.add(copied).cast::<u16>().read_unaligned())
+        };
+        copied += 2;
+    }
+    if remaining != copied {
+        unsafe { output.add(copied).write(input.add(copied).read()) };
+    }
     // SAFETY: block contains exactly 16 initialized bytes.
     unsafe { load(block.as_ptr()) }
 }
@@ -68,6 +104,42 @@ fn xor(a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
     veorq_u8(a, b)
 }
 
+/// Mixes one independent column of four lanes and reduces it to one lane.
+///
+/// Keeping the column out of line bounds the live ranges of its rotation
+/// counts and intermediate values. The eight vector arguments fit in the
+/// aarch64 vector-argument registers.
+#[inline(never)]
+#[target_feature(enable = "neon,aes")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn mix_column(
+    v0: uint8x16_t,
+    v1: uint8x16_t,
+    v2: uint8x16_t,
+    v3: uint8x16_t,
+    c0: uint8x16_t,
+    c1: uint8x16_t,
+    c2: uint8x16_t,
+    c3: uint8x16_t,
+) -> uint8x16_t {
+    let mut m0 = unsafe { enc_xor(rot(v1, v0), v0, rot(c1, v2)) };
+    let mut m1 = unsafe { enc_xor(rot(v2, v1), v1, rot(c0, v3)) };
+    let mut m2 = unsafe { enc_xor(rot(v3, v2), v2, rot(c3, v0)) };
+    let mut m3 = unsafe { enc_xor(rot(v0, v3), v3, rot(c2, v1)) };
+
+    m0 = unsafe { enc_xor(rot(v2, v0), m0, rot(c2, v3)) };
+    m1 = unsafe { enc_xor(rot(v3, v1), m1, rot(c3, v2)) };
+    m2 = unsafe { enc_xor(rot(v0, v2), m2, rot(c0, v1)) };
+    m3 = unsafe { enc_xor(rot(v1, v3), m3, rot(c1, v0)) };
+
+    m0 = unsafe { enc_xor(rot(v3, v0), m0, rot(c3, v1)) };
+    m1 = unsafe { enc_xor(rot(v0, v1), m1, rot(c2, v0)) };
+    m2 = unsafe { enc_xor(rot(v1, v2), m2, rot(c1, v3)) };
+    m3 = unsafe { enc_xor(rot(v2, v3), m3, rot(c0, v2)) };
+
+    xor(xor(m0, m1), xor(m2, m3))
+}
+
 #[target_feature(enable = "neon,aes")]
 pub(crate) unsafe fn hash_neon(data: &[u8], seed: u64) -> Hash128 {
     let zero = vdupq_n_u8(0);
@@ -101,13 +173,25 @@ pub(crate) unsafe fn hash_neon(data: &[u8], seed: u64) -> Hash128 {
         }
         offset = 256;
 
-        while data.len() - offset >= 256 {
-            let previous = offset - 256;
-            for (index, state) in state.iter_mut().enumerate() {
-                // SAFETY: `previous` precedes a full block at `offset`.
-                let key = unsafe { load(data.as_ptr().add(previous + index * 16)) };
-                *state = unsafe { aes_round(*state, key) };
-            }
+        macro_rules! absorb_block {
+            ($block_offset:expr) => {{
+                let block_offset = $block_offset;
+                for (index, value) in state.iter_mut().enumerate() {
+                    // SAFETY: callers select a complete 256-byte block.
+                    let key = unsafe { load(data.as_ptr().add(block_offset + index * 16)) };
+                    *value = unsafe { aes_round(*value, key) };
+                }
+            }};
+        }
+
+        while data.len() - offset >= 512 {
+            absorb_block!(offset - 256);
+            absorb_block!(offset);
+            offset += 512;
+        }
+
+        if data.len() - offset >= 256 {
+            absorb_block!(offset - 256);
             offset += 256;
         }
 
@@ -158,62 +242,15 @@ pub(crate) unsafe fn hash_neon(data: &[u8], seed: u64) -> Hash128 {
         *value = xor(lane.state, lane.key);
     }
 
-    let mut m = [zero; 16];
+    // The four columns are independent. Complete and reduce each one before
+    // starting the next so that sixteen intermediate lanes are not live at
+    // the same time.
+    v[0] = unsafe { mix_column(v[0], v[4], v[8], v[12], c[0], c[4], c[8], c[12]) };
+    v[1] = unsafe { mix_column(v[1], v[5], v[9], v[13], c[1], c[5], c[9], c[13]) };
+    v[2] = unsafe { mix_column(v[2], v[6], v[10], v[14], c[2], c[6], c[10], c[14]) };
+    v[3] = unsafe { mix_column(v[3], v[7], v[11], v[15], c[3], c[7], c[11], c[15]) };
 
-    m[0] = unsafe { enc_xor(rot(v[4], v[0]), v[0], rot(c[4], v[8])) };
-    m[1] = unsafe { enc_xor(rot(v[5], v[1]), v[1], rot(c[5], v[9])) };
-    m[2] = unsafe { enc_xor(rot(v[6], v[2]), v[2], rot(c[6], v[10])) };
-    m[3] = unsafe { enc_xor(rot(v[7], v[3]), v[3], rot(c[7], v[11])) };
-    m[4] = unsafe { enc_xor(rot(v[8], v[4]), v[4], rot(c[0], v[12])) };
-    m[5] = unsafe { enc_xor(rot(v[9], v[5]), v[5], rot(c[1], v[13])) };
-    m[6] = unsafe { enc_xor(rot(v[10], v[6]), v[6], rot(c[2], v[14])) };
-    m[7] = unsafe { enc_xor(rot(v[11], v[7]), v[7], rot(c[3], v[15])) };
-    m[8] = unsafe { enc_xor(rot(v[12], v[8]), v[8], rot(c[12], v[0])) };
-    m[9] = unsafe { enc_xor(rot(v[13], v[9]), v[9], rot(c[13], v[1])) };
-    m[10] = unsafe { enc_xor(rot(v[14], v[10]), v[10], rot(c[14], v[2])) };
-    m[11] = unsafe { enc_xor(rot(v[15], v[11]), v[11], rot(c[15], v[3])) };
-    m[12] = unsafe { enc_xor(rot(v[0], v[12]), v[12], rot(c[8], v[4])) };
-    m[13] = unsafe { enc_xor(rot(v[1], v[13]), v[13], rot(c[9], v[5])) };
-    m[14] = unsafe { enc_xor(rot(v[2], v[14]), v[14], rot(c[10], v[6])) };
-    m[15] = unsafe { enc_xor(rot(v[3], v[15]), v[15], rot(c[11], v[7])) };
-
-    m[0] = unsafe { enc_xor(rot(v[8], v[0]), m[0], rot(c[8], v[12])) };
-    m[1] = unsafe { enc_xor(rot(v[9], v[1]), m[1], rot(c[9], v[13])) };
-    m[2] = unsafe { enc_xor(rot(v[10], v[2]), m[2], rot(c[10], v[14])) };
-    m[3] = unsafe { enc_xor(rot(v[11], v[3]), m[3], rot(c[11], v[15])) };
-    m[4] = unsafe { enc_xor(rot(v[12], v[4]), m[4], rot(c[12], v[8])) };
-    m[5] = unsafe { enc_xor(rot(v[13], v[5]), m[5], rot(c[13], v[9])) };
-    m[6] = unsafe { enc_xor(rot(v[14], v[6]), m[6], rot(c[14], v[10])) };
-    m[7] = unsafe { enc_xor(rot(v[15], v[7]), m[7], rot(c[15], v[11])) };
-    m[8] = unsafe { enc_xor(rot(v[0], v[8]), m[8], rot(c[0], v[4])) };
-    m[9] = unsafe { enc_xor(rot(v[1], v[9]), m[9], rot(c[1], v[5])) };
-    m[10] = unsafe { enc_xor(rot(v[2], v[10]), m[10], rot(c[2], v[6])) };
-    m[11] = unsafe { enc_xor(rot(v[3], v[11]), m[11], rot(c[3], v[7])) };
-    m[12] = unsafe { enc_xor(rot(v[4], v[12]), m[12], rot(c[4], v[0])) };
-    m[13] = unsafe { enc_xor(rot(v[5], v[13]), m[13], rot(c[5], v[1])) };
-    m[14] = unsafe { enc_xor(rot(v[6], v[14]), m[14], rot(c[6], v[2])) };
-    m[15] = unsafe { enc_xor(rot(v[7], v[15]), m[15], rot(c[7], v[3])) };
-
-    m[0] = unsafe { enc_xor(rot(v[12], v[0]), m[0], rot(c[12], v[4])) };
-    m[1] = unsafe { enc_xor(rot(v[13], v[1]), m[1], rot(c[13], v[5])) };
-    m[2] = unsafe { enc_xor(rot(v[14], v[2]), m[2], rot(c[14], v[6])) };
-    m[3] = unsafe { enc_xor(rot(v[15], v[3]), m[3], rot(c[15], v[7])) };
-    m[4] = unsafe { enc_xor(rot(v[0], v[4]), m[4], rot(c[8], v[0])) };
-    m[5] = unsafe { enc_xor(rot(v[1], v[5]), m[5], rot(c[9], v[1])) };
-    m[6] = unsafe { enc_xor(rot(v[2], v[6]), m[6], rot(c[10], v[2])) };
-    m[7] = unsafe { enc_xor(rot(v[3], v[7]), m[7], rot(c[11], v[3])) };
-    m[8] = unsafe { enc_xor(rot(v[4], v[8]), m[8], rot(c[4], v[12])) };
-    m[9] = unsafe { enc_xor(rot(v[5], v[9]), m[9], rot(c[5], v[13])) };
-    m[10] = unsafe { enc_xor(rot(v[6], v[10]), m[10], rot(c[6], v[14])) };
-    m[11] = unsafe { enc_xor(rot(v[7], v[11]), m[11], rot(c[7], v[15])) };
-    m[12] = unsafe { enc_xor(rot(v[8], v[12]), m[12], rot(c[0], v[8])) };
-    m[13] = unsafe { enc_xor(rot(v[9], v[13]), m[13], rot(c[1], v[9])) };
-    m[14] = unsafe { enc_xor(rot(v[10], v[14]), m[14], rot(c[2], v[10])) };
-    m[15] = unsafe { enc_xor(rot(v[11], v[15]), m[15], rot(c[3], v[11])) };
-
-    for i in 0..4 {
-        v[i] = xor(xor(m[i], m[i + 4]), xor(m[i + 8], m[i + 12]));
-    }
+    let mut m = [zero; 4];
 
     m[0] = unsafe { enc_xor(rot(v[1], v[0]), v[0], v[3]) };
     m[1] = unsafe { enc_xor(rot(v[2], v[1]), v[1], v[0]) };
