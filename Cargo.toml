@@ -1,0 +1,21 @@
+[package]
+name = "rotohash-rs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "A high-throughput 128-bit RotoHash implementation"
+license = "MIT"
+repository = "https://github.com/jandrewrogers/RotoHash"
+keywords = ["hash", "checksum", "simd", "avx2"]
+categories = ["algorithms"]
+exclude = ["benches", "tests"]
+
+[lib]
+name = "rotohash"
+
+[[bench]]
+name = "performance"
+harness = false
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
