@@ -13,8 +13,7 @@ sustained rates exceeding 100 GB/s but the design is general in nature.
 
 This crate provides AVX-512, AVX2, and NEON based implementations for stable Rust. All three
 produce identical hashes. Performance of the x86-64 backends is at parity (or better) with the
-C++ reference implementation. The aarch64 backend has no C++ counterpart (the reference
-implementation is x86-64 only) but is verified that it is the same bit-for-bit.
+C++ reference implementation. The aarch64 backend is verified to be identical bit-for-bit.
 
 ```rust
 use rotohash::{hash, hash_with_seed};
