@@ -6,9 +6,9 @@ rust-version = "1.89"
 description = "A high-throughput 128-bit RotoHash implementation"
 license = "MIT"
 repository = "https://github.com/jandrewrogers/RotoHash"
-keywords = ["hash", "checksum", "simd", "avx2"]
+keywords = ["hash", "checksum", "simd", "avx2", "neon"]
 categories = ["algorithms"]
-exclude = ["benches", "tests"]
+exclude = ["benches", "examples", "tests"]
 
 [lib]
 name = "rotohash"

@@ -1,3 +1,10 @@
+//! Compares the Rust implementations against the C++ reference implementation.
+//!
+//! The C++ reference only supports x86-64. On other architectures, use the
+//! `vectors` integration test (and the `vectors` example) instead, which
+//! compares against hashes recorded on an x86-64 machine.
+#![cfg(target_arch = "x86_64")]
+
 use rotohash::hash_with_seed;
 use std::path::{Path, PathBuf};
 use std::process::Command;
