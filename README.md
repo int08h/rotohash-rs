@@ -31,13 +31,13 @@ println!("{unseeded}");
 
 ## Run-time CPU detection
 
-On x86-64, this crate compiles both `hash_avx2` and `hash_avx512` and chooses between 
+On x86-64, this crate compiles both `hash_avx2` (`src/avx2.rs`) and `hash_avx512` (`src/avx512.rs`) and chooses between 
 them at **runtime**. `implementation()` uses `is_x86_feature_detected!` (a cached cpuid 
 check) to take the 512-bit path when AVX-512F, AVX-512BW, and VAES are present, and the 
 AVX2/AES-NI path otherwise. One binary runs as fast as the hardware allows on any 
 x86-64 processor with at least AVX2 and AES-NI.
 
-On aarch64, the crate compiles `hash_neon`, which uses NEON and the ARMv8 AES 
+On aarch64, the crate compiles `hash_neon` (`src/neon.rs`), which uses NEON and the ARMv8 AES 
 extension (`AESE`/`AESMC`). `implementation()` uses `is_aarch64_feature_detected!` to
 confirm the AES extension is present. Nearly every aarch64 processor made for general 
 use has it (Apple M-series, AWS Graviton, Ampere, Snapdragon, Raspberry Pi 5); the 
